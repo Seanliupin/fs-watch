@@ -156,7 +156,7 @@ function clientMode(targetUrl, dir = argv.dir) {
       case "rename":
         fs.access(filePath, fs.constants.F_OK, (err) => {
           if (err) {
-            handleFileDelete(filePath);
+            handleFileDelete(filename);
           } else {
             readContent().then((content) => {
               handleFileCreate(filename, content);
