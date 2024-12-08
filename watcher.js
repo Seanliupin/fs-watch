@@ -135,7 +135,6 @@ function clientMode(targetUrl, dir = argv.dir) {
 
   fs.watch(dir, { recursive: true }, (eventType, filename) => {
     if (!filename) return;
-    console.log(`${filename} [${eventType}]`);
 
     const filePath = pathLib.join(dir, filename);
 
@@ -155,9 +154,11 @@ function clientMode(targetUrl, dir = argv.dir) {
       case "rename":
         fs.access(filePath, fs.constants.F_OK, async (err) => {
           if (err) {
+            console.log(`${filename} [delete]`);
             await handleFileDelete(filename);
           } else {
             await readContent().then(async (content) => {
+              console.log(`${filename} [new}]`);
               await handleFileCreate(filename, content);
             });
           }
@@ -166,6 +167,7 @@ function clientMode(targetUrl, dir = argv.dir) {
 
       case "change":
         readContent().then((content) => {
+          console.log(`${filename} [change}]`);
           handleFileChange(filename, content);
         });
         break;
