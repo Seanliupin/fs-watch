@@ -158,7 +158,7 @@ function clientMode(targetUrl, dir = argv.dir) {
             await handleFileDelete(filename);
           } else {
             await readContent().then(async (content) => {
-              console.log(`${filename} [new}]`);
+              console.log(`${filename} [new]`);
               await handleFileCreate(filename, content);
             });
           }
@@ -167,7 +167,7 @@ function clientMode(targetUrl, dir = argv.dir) {
 
       case "change":
         readContent().then((content) => {
-          console.log(`${filename} [change}]`);
+          console.log(`${filename} [change]`);
           handleFileChange(filename, content);
         });
         break;
@@ -192,7 +192,10 @@ function serverMode(port = argv.port, dir = argv.dir) {
 
   const createFile = async (filePath, content) => {
     await fs.promises.mkdir(pathLib.dirname(filePath), { recursive: true });
-    return fs.promises.writeFile(filePath, content, "utf8");
+    if (content) {
+      fs.promises.writeFile(filePath, content, "utf8");
+    }
+    return;
   };
 
   const deleteFile = (filePath) => {
@@ -249,9 +252,14 @@ function serverMode(port = argv.port, dir = argv.dir) {
           ok(res, "done", "更新已接收");
           return;
         case "new":
-          await createFile(filePath, "");
+          const content = data.content ? data.content : "";
+          await createFile(filePath, content);
           console.log(`创建: ${data.path}`);
-          ok(res, "needFull", "new file. need full");
+          if (data.content) {
+            ok(res, "done", "更新已接收");
+          } else {
+            ok(res, "needFull", "new file. need full");
+          }
           return;
         case "delete":
           try {
