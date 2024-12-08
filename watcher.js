@@ -87,30 +87,40 @@ function clientMode(targetUrl, dir = argv.dir) {
     }
   };
 
-  const handleFileChange = (filename, content) => {
+  const handleFileChange = async (filename, content) => {
     const hash = sha256(content);
     const fileData = fileHashes.get(filename) || { hash: "", content: "" };
-    if (fileData.hash === hash) {
-      console.log(`文件 ${filename} 内容未发生实质变化`);
+
+    if (!fileData.hash) {
+      const res = await post(filename, "change", hash, "", content);
+      if (res.status === "done") {
+        fileHashes.set(filename, {
+          hash,
+          content,
+        });
+        console.log(`首次推送全文: ${filename}`);
+      }
       return;
     }
 
     const diff = diffContent(fileData.content, content);
-    const res = post(filename, "change", hash, diff);
+    const res = await post(filename, "change", fileData.hash, diff);
     const status = res.status;
     if (status === "done") {
       fileHashes.set(filename, {
         hash,
         content,
       });
+      console.log(`推送差异: ${filename} ${fileData.hash}`);
     } else if (status === "needFull") {
-      const res = post(filename, "change", hash, diff, content);
+      const res = await post(filename, "change", "", "", content);
       if (res.status === "done") {
         fileHashes.set(filename, {
           hash,
           content,
         });
       }
+      console.log(`推送全文: ${filename}`);
     }
   };
 
@@ -170,7 +180,7 @@ function serverMode(port = argv.port, dir = argv.dir) {
   };
 
   const createFile = async (path, content) => {
-    await fs.promises.mkdir(dirname(path), { recursive: true });
+    await fs.promises.mkdir(path.dirname(path), { recursive: true });
     return fs.promises.writeFile(path, content, "utf8");
   };
 
@@ -213,33 +223,33 @@ function serverMode(port = argv.port, dir = argv.dir) {
       // 根据不同的类型处理
       switch (data.type) {
         case "change":
-          if (currentHash !== data.hash) {
-            console.log(`需要完整的内容：${filePath}`);
-            ok(res, "needFull", "");
-            return;
-          }
-
           if (data.content) {
             newContent = data.content;
+            await writeFile(filePath, newContent);
+            console.log(`更新全文：${data.path}`);
           } else {
+            if (currentHash !== data.hash) {
+              console.log(`hash不一致: ${currentHash} !== ${data.hash}`);
+              ok(res, "needFull", "");
+              return;
+            }
             newContent = applyDiff(fileContent, data.diff);
+            await writeFile(filePath, newContent);
+            console.log(`更新补丁：${data.path} ${data.hash}`);
           }
-          await writeFile(filePath, newContent);
-          console.log(`补丁已更新：${data.path} ${data.diff}`);
           ok(res, "done", "更新已接收");
           return;
         case "new":
-          console.log(`收到完整内容更新：${data.path}`);
-          // 直接使用新内容
           newContent = data.content;
           await writeFile(filePath, newContent);
+          console.log(`创建: ${data.path}`);
           break;
         case "delete":
-          console.log(`收到删除请求：${data.path}`);
           try {
             await fs.promises.unlink(filePath);
+            console.log(`删除: ${data.path}`);
           } catch (err) {
-            console.error(`删除文件失败: ${err.message}`);
+            console.error(`删除失败: ${err.message}`);
           }
           break;
 
