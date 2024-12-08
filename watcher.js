@@ -1,97 +1,24 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const diff = require('diff');
+const diff = require("diff");
+const http = require("http");
 
 const watchDir = "/Users/seanliu/workspace/projects/money-log/money-wx/pages"; // 替换为你的监控目录
 
-// 添加文件哈希存储对象
-const fileHashes = new Map();
-
-fs.watch(watchDir, { recursive: true }, (eventType, filename) => {
-  if (!filename) return;
-  console.log(`${filename} [${eventType}]`);
-
-  const filePath = path.join(watchDir, filename);
-
-  const readContent = () => {
-    return new Promise((resolve, reject) => {
-      fs.readFile(filePath, "utf8", (err, content) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(content);
-      });
-    });
-  };
-
-  switch (eventType) {
-    case "rename":
-      fs.access(filePath, fs.constants.F_OK, (err) => {
-        if (err) {
-          handleFileDelete(filePath);
-        } else {
-          readContent().then((content) => {
-            handleFileCreate(filename, content);
-          });
-        }
-      });
-      break;
-
-    case "change":
-      readContent().then((content) => {
-        handleFileChange(filename, content);
-      });
-      break;
-  }
-});
-
-function handleFileCreate(filename, content) {
-  console.log(`新文件创建: ${filename}`);
-}
-
-function handleFileDelete(filePath) {
-  console.log(`文件被删除: ${filePath}`);
-}
-
-function handleFileChange(filename, content) {
+function sha256(content) {
   // 计算文件内容的 SHA-256 哈希值
-  const hash = crypto.createHash("sha256").update(content).digest("hex");
-
-  // 获取旧的哈希值（如果存在）
-  const fileData = fileHashes.get(filename) || { hash: "", content: "" };
-
-  // 如果哈希值相同，说明内容没有实质变化，可以跳过处理
-  if (fileData.hash === hash) {
-    console.log(`文件 ${filename} 内容未发生实质变化`);
-    return;
-  }
-
-  // 存储新的哈希值和内容
-  fileHashes.set(filename, {
-    hash,
-    content,
-  });
-
-  console.log(`${filename} 的新哈希值: ${hash}`);
-
-  try {
-    // 这里可以添加具体的文件处理逻辑
-    console.log(`Processing ${filename}...`);
-    console.log(`File content length: ${content.length} bytes`);
-  } catch (error) {
-    console.error(`Error processing file ${filename}:`, error);
-  }
+  return crypto.createHash("sha256").update(content).digest("hex");
 }
 
 function diffContent(oldContent, newContent) {
   // 创建行级别的差异
-  const changes = diff.createPatch('file',
+  const changes = diff.createPatch(
+    "file",
     oldContent,
     newContent,
-    'old',
-    'new'
+    "old",
+    "new"
   );
   return changes;
 }
@@ -100,33 +27,217 @@ function applyDiff(oldContent, changes) {
   return diff.applyPatch(oldContent, changes);
 }
 
-// 使用示例：
-/**/
-const oldContent = `line1
-line2
-line3
-line4
-line5
-line6
-line7
-line8
-line9
-line10`;
+function clientMode(targetUrl, dir = ".") {
+  // 添加文件哈希存储对象
+  const fileHashes = new Map();
 
-const newContent = `line1
-line2
-line3
-modified line4
-line5
-line6
-line7
-line8
-modified line9
-line10`;
+  const post = async (path, type, hash = "", diff = "", content = "") => {
+    const payload = {
+      path,
+      type,
+    };
 
-const changes = diffContent(oldContent, newContent);
-console.log(changes);
+    if (hash) payload.hash = hash;
+    if (diff) payload.diff = diff;
+    if (content) payload.content = content;
 
+    const response = await fetch(targetUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
 
-const reconstructed = applyDiff(oldContent, changes);
-console.log(reconstructed === newContent); // true
+    return await response.json();
+  };
+
+  const handleFileCreate = (filename, content) => {
+    console.log(`新文件创建: ${filename}`);
+    const hash = sha256(content);
+    const res = post(filename, "new", hash, "", content);
+    if (res.status === "done") {
+      fileHashes.set(filename, {
+        hash,
+        content,
+      });
+    }
+  };
+
+  const handleFileDelete = (filePath) => {
+    console.log(`文件被删除: ${filePath}`);
+    const res = post(filePath, "delete");
+    if (res.status === "done") {
+      fileHashes.delete(filePath);
+    }
+  };
+
+  const handleFileChange = (filename, content) => {
+    const hash = sha256(content);
+    const fileData = fileHashes.get(filename) || { hash: "", content: "" };
+    if (fileData.hash === hash) {
+      console.log(`文件 ${filename} 内容未发生实质变化`);
+      return;
+    }
+
+    const diff = diffContent(fileData.content, content);
+    const res = post(filename, "change", hash, diff);
+    const status = res.status;
+    if (status === "done") {
+      fileHashes.set(filename, {
+        hash,
+        content,
+      });
+    } else if (status === "needFull") {
+      const res = post(filename, "change", hash, diff, content);
+      if (res.status === "done") {
+        fileHashes.set(filename, {
+          hash,
+          content,
+        });
+      }
+    }
+  };
+
+  fs.watch(dir, { recursive: true }, (eventType, filename) => {
+    if (!filename) return;
+    console.log(`${filename} [${eventType}]`);
+
+    const filePath = path.join(dir, filename);
+
+    const readContent = () => {
+      return new Promise((resolve, reject) => {
+        fs.readFile(filePath, "utf8", (err, content) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(content);
+        });
+      });
+    };
+
+    switch (eventType) {
+      case "rename":
+        fs.access(filePath, fs.constants.F_OK, (err) => {
+          if (err) {
+            handleFileDelete(filePath);
+          } else {
+            readContent().then((content) => {
+              handleFileCreate(filename, content);
+            });
+          }
+        });
+        break;
+
+      case "change":
+        readContent().then((content) => {
+          handleFileChange(filename, content);
+        });
+        break;
+    }
+  });
+}
+
+function serverMode(port = 3033, dir = ".") {
+  const ok = (res, status, message) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status, message }));
+  };
+
+  const error = (res, message) => {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "error", message }));
+  };
+
+  const writeFile = (path, content) => {
+    return fs.promises.writeFile(path, content, "utf8");
+  };
+
+  const createFile = async (path, content) => {
+    await fs.promises.mkdir(dirname(path), { recursive: true });
+    return fs.promises.writeFile(path, content, "utf8");
+  };
+
+  const deleteFile = (path) => {
+    return fs.promises.unlink(path);
+  };
+
+  const getBody = (req) => {
+    return new Promise((resolve, reject) => {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        const data = JSON.parse(body);
+        resolve(data);
+      });
+    });
+  };
+
+  // 创建 HTTP 服务器
+  const server = http.createServer((req, res) => {
+    if (req.method !== "POST") {
+      error(res, "仅支持 POST 请求");
+      return;
+    }
+
+    getBody(req).then(async (data) => {
+      const filePath = path.join(dir, data.path);
+      let fileContent;
+      try {
+        fileContent = await fs.promises.readFile(filePath, "utf8");
+      } catch (err) {
+        throw new Error(`无法读取文件: ${err.message}`);
+      }
+
+      let newContent;
+      const currentHash = sha256(fileContent);
+
+      // 根据不同的类型处理
+      switch (data.type) {
+        case "change":
+          if (currentHash !== data.hash) {
+            console.log(`需要完整的内容：${filePath}`);
+            ok(res, "needFull", "");
+            return;
+          }
+
+          if (data.content) {
+            newContent = data.content;
+          } else {
+            newContent = applyDiff(fileContent, data.diff);
+          }
+          await writeFile(filePath, newContent);
+          console.log(`补丁已更新：${data.path} ${data.diff}`);
+          ok(res, "done", "更新已接收");
+          return;
+        case "new":
+          console.log(`收到完整内容更新：${data.path}`);
+          // 直接使用新内容
+          newContent = data.content;
+          await writeFile(filePath, newContent);
+          break;
+        case "delete":
+          console.log(`收到删除请求：${data.path}`);
+          try {
+            await fs.promises.unlink(filePath);
+          } catch (err) {
+            console.error(`删除文件失败: ${err.message}`);
+          }
+          break;
+
+        default:
+          error(res, "不支持的操作类型");
+          return;
+      }
+      ok(res, "done", "更新已接收");
+    });
+  });
+
+  // 启动服务器
+  server.listen(port, () => {
+    console.log("服务器已启动，监听端口 3033");
+  });
+}
