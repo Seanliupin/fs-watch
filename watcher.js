@@ -217,7 +217,6 @@ function serverMode(port = argv.port, dir = argv.dir) {
     }
 
     getBody(req).then(async (data) => {
-      console.log(`receive data is ${JSON.stringify(data)}`);
       const filePath = pathLib.join(dir, data.path);
       // 根据不同的类型处理
       switch (data.type) {
