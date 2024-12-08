@@ -27,7 +27,6 @@ function sha256(content) {
 }
 
 function diffContent(oldContent, newContent) {
-  // 创建行级别的差异
   const changes = diff.createPatch(
     "file",
     oldContent,
@@ -67,10 +66,10 @@ function clientMode(targetUrl, dir = argv.dir) {
     return await response.json();
   };
 
-  const handleFileCreate = (filename, content) => {
+  const handleFileCreate = async (filename, content) => {
     const hash = sha256(content);
-    const res = post(filename, "new", hash, "", content);
-    if (res.status === "done") {
+    const res = await post(filename, "new", hash, "", content);
+    if (res.status === "done" || res.status === "needFull") {
       fileHashes.set(filename, {
         hash,
         content,
@@ -81,8 +80,8 @@ function clientMode(targetUrl, dir = argv.dir) {
     }
   };
 
-  const handleFileDelete = (filePath) => {
-    const res = post(filePath, "delete");
+  const handleFileDelete = async (filePath) => {
+    const res = await post(filePath, "delete");
     if (res.status === "done") {
       fileHashes.delete(filePath);
       console.log(`删除: ${filePath}`);
@@ -154,12 +153,12 @@ function clientMode(targetUrl, dir = argv.dir) {
 
     switch (eventType) {
       case "rename":
-        fs.access(filePath, fs.constants.F_OK, (err) => {
+        fs.access(filePath, fs.constants.F_OK, async (err) => {
           if (err) {
-            handleFileDelete(filename);
+            await handleFileDelete(filename);
           } else {
-            readContent().then((content) => {
-              handleFileCreate(filename, content);
+            await readContent().then(async (content) => {
+              await handleFileCreate(filename, content);
             });
           }
         });
@@ -211,7 +210,6 @@ function serverMode(port = argv.port, dir = argv.dir) {
     });
   };
 
-  // 创建 HTTP 服务器
   const server = http.createServer((req, res) => {
     if (req.method !== "POST") {
       error(res, "仅支持 POST 请求");
@@ -219,6 +217,7 @@ function serverMode(port = argv.port, dir = argv.dir) {
     }
 
     getBody(req).then(async (data) => {
+      console.log(`receive data is ${JSON.stringify(data)}`);
       const filePath = pathLib.join(dir, data.path);
       // 根据不同的类型处理
       switch (data.type) {
@@ -227,7 +226,7 @@ function serverMode(port = argv.port, dir = argv.dir) {
           try {
             fileContent = await fs.promises.readFile(filePath, "utf8");
           } catch (err) {
-            await createFile(filePath, data.content);
+            await createFile(filePath, "");
             console.log(`创建: ${data.path}`);
             ok(res, "needFull", "");
             return;
@@ -240,7 +239,7 @@ function serverMode(port = argv.port, dir = argv.dir) {
           } else {
             if (currentHash !== data.hash) {
               console.log(`hash不一致: ${currentHash} !== ${data.hash}`);
-              ok(res, "needFull", "");
+              ok(res, "needFull", "hash not match. need full");
               return;
             }
             await writeFile(filePath, applyDiff(fileContent, data.diff));
@@ -249,9 +248,10 @@ function serverMode(port = argv.port, dir = argv.dir) {
           ok(res, "done", "更新已接收");
           return;
         case "new":
-          await createFile(filePath, data.content);
+          await createFile(filePath, "");
           console.log(`创建: ${data.path}`);
-          break;
+          ok(res, "needFull", "new file. need full");
+          return;
         case "delete":
           try {
             await deleteFile(filePath);
@@ -267,7 +267,6 @@ function serverMode(port = argv.port, dir = argv.dir) {
           error(res, "不支持的操作类型");
           return;
       }
-      ok(res, "done", "更新已接收");
     });
   });
 
