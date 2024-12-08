@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -6,18 +8,18 @@ const http = require("http");
 const minimist = require("minimist");
 
 const argv = minimist(process.argv.slice(2), {
-  string: ["d", "dir", "p", "port"],
+  string: ["d", "dir", "p", "port", "t", "target"],
   alias: {
     d: "dir",
     p: "port",
+    t: "target",
   },
   default: {
     dir: ".",
     port: "3033",
+    target: "http://localhost:3033",
   },
 });
-
-const watchDir = "/Users/seanliu/workspace/projects/money-log/money-wx/pages"; // 替换为你的监控目录
 
 function sha256(content) {
   // 计算文件内容的 SHA-256 哈希值
@@ -251,20 +253,18 @@ function serverMode(port = argv.port, dir = argv.dir) {
 
   // 启动服务器
   server.listen(port, () => {
-    console.log("服务器已启动，监听端口 3033");
+    console.log(`服务器已启动，监听端口 ${port}`);
   });
 }
 
 // 直接执行启动逻辑
 const mode = argv._[0]; // 第一个无标志的参数作为模式
 if (mode === "server") {
+  console.log(`服务器模式，监听端口: ${argv.port} 目录: ${argv.dir}`);
   serverMode();
 } else if (mode === "client") {
-  if (!argv._[1]) {
-    console.error("客户端模式需要指定目标URL");
-    process.exit(1);
-  }
-  clientMode(argv._[1]);
+  console.log(`客户端模式，目标 URL: ${argv.target} 目录: ${argv.dir}`);
+  clientMode(argv.target);
 } else {
   console.log(`
 使用方法:

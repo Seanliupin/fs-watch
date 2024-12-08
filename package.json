@@ -1,4 +1,10 @@
 {
+  "name": "file-watcher",
+  "version": "1.0.0",
+  "description": "A file watching and syncing tool",
+  "bin": {
+    "watcher": "./watcher.js"
+  },
   "dependencies": {
     "diff": "^7.0.0",
     "minimist": "^1.2.8"
