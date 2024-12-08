@@ -3,6 +3,19 @@ const path = require("path");
 const crypto = require("crypto");
 const diff = require("diff");
 const http = require("http");
+const minimist = require("minimist");
+
+const argv = minimist(process.argv.slice(2), {
+  string: ["d", "dir", "p", "port"],
+  alias: {
+    d: "dir",
+    p: "port",
+  },
+  default: {
+    dir: ".",
+    port: "3033",
+  },
+});
 
 const watchDir = "/Users/seanliu/workspace/projects/money-log/money-wx/pages"; // 替换为你的监控目录
 
@@ -27,7 +40,7 @@ function applyDiff(oldContent, changes) {
   return diff.applyPatch(oldContent, changes);
 }
 
-function clientMode(targetUrl, dir = ".") {
+function clientMode(targetUrl, dir = argv.dir) {
   // 添加文件哈希存储对象
   const fileHashes = new Map();
 
@@ -139,7 +152,7 @@ function clientMode(targetUrl, dir = ".") {
   });
 }
 
-function serverMode(port = 3033, dir = ".") {
+function serverMode(port = argv.port, dir = argv.dir) {
   const ok = (res, status, message) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status, message }));
@@ -240,4 +253,27 @@ function serverMode(port = 3033, dir = ".") {
   server.listen(port, () => {
     console.log("服务器已启动，监听端口 3033");
   });
+}
+
+// 直接执行启动逻辑
+const mode = argv._[0]; // 第一个无标志的参数作为模式
+if (mode === "server") {
+  serverMode();
+} else if (mode === "client") {
+  if (!argv._[1]) {
+    console.error("客户端模式需要指定目标URL");
+    process.exit(1);
+  }
+  clientMode(argv._[1]);
+} else {
+  console.log(`
+使用方法:
+  服务器模式: node watcher.js server [-p 端口] [-d 目录]
+  客户端模式: node watcher.js client <目标URL> [-d 目录]
+    
+选项:
+  -p, --port   指定服务器端口 (默认: 3033)
+  -d, --dir    指定监控目录 (默认: 当前目录)
+  `);
+  process.exit(1);
 }
